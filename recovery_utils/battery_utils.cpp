@@ -17,15 +17,59 @@
 #include "recovery_utils/battery_utils.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <unistd.h>
 
+#include <string>
+
+#include <android-base/file.h>
 #include <android-base/logging.h>
 #include <android/binder_manager.h>
 #include <health-shim/shim.h>
 #include <healthhalutils/HealthHalUtils.h>
 
+namespace {
+
+constexpr const char* kBatteryCapacityPaths[] = {
+    "/sys/class/power_supply/battery/capacity",
+    "/sys/class/power_supply/batt/capacity",
+};
+constexpr const char* kBatteryStatusPaths[] = {
+    "/sys/class/power_supply/battery/status",
+    "/sys/class/power_supply/batt/status",
+};
+
+bool ReadBatteryCapacityFromSysfs(int32_t* capacity) {
+  for (const char* path : kBatteryCapacityPaths) {
+    std::string value;
+    if (!android::base::ReadFileToString(path, &value)) {
+      continue;
+    }
+    int32_t parsed = atoi(value.c_str());
+    if (parsed >= 0 && parsed <= 100) {
+      *capacity = parsed;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool ReadBatteryChargingFromSysfs(bool* charging) {
+  for (const char* path : kBatteryStatusPaths) {
+    std::string value;
+    if (!android::base::ReadFileToString(path, &value)) {
+      continue;
+    }
+    *charging = value.find("Charging") != std::string::npos ||
+                value.find("Full") != std::string::npos;
+    return true;
+  }
+  return false;
+}
+
+}  // namespace
+
 BatteryInfo GetBatteryInfo() {
-  using android::hardware::health::V2_0::get_health_service;
   using HidlHealth = android::hardware::health::V2_0::IHealth;
   using aidl::android::hardware::health::BatteryStatus;
   using aidl::android::hardware::health::HealthShim;
@@ -40,18 +84,20 @@ BatteryInfo GetBatteryInfo() {
       AServiceManager_isDeclared(service_name.c_str());
   std::shared_ptr<IHealth> health;
   if (aidl_health_declared) {
-    ndk::SpAIBinder binder(AServiceManager_waitForService(service_name.c_str()));
-    health = IHealth::fromBinder(binder);
+    ndk::SpAIBinder binder(AServiceManager_checkService(service_name.c_str()));
+    if (binder.get() != nullptr) {
+      health = IHealth::fromBinder(binder);
+    }
   }
   if (health == nullptr) {
     LOG(INFO) << "Unable to get AIDL health service, trying HIDL...";
-    android::sp<HidlHealth> hidl_health = get_health_service();
+    android::sp<HidlHealth> hidl_health = HidlHealth::tryGetService("default");
     if (hidl_health != nullptr) {
       health = ndk::SharedRefBase::make<HealthShim>(hidl_health);
     }
   }
   if (health == nullptr) {
-    LOG(WARNING) << "No health implementation is found; assuming defaults";
+    LOG(WARNING) << "No health implementation is found, falling back to sysfs";
   }
 
   int wait_second = 0;
@@ -69,6 +115,11 @@ BatteryInfo GetBatteryInfo() {
     // for the meaning of the return values.
     bool charging = (charge_status != BatteryStatus::DISCHARGING &&
                      charge_status != BatteryStatus::NOT_CHARGING);
+    if (health == nullptr || charge_status == BatteryStatus::UNKNOWN) {
+      if (ReadBatteryChargingFromSysfs(&charging)) {
+        LOG(INFO) << "Read charging state from sysfs: " << charging;
+      }
+    }
 
     int32_t capacity = INT32_MIN;
     if (health != nullptr) {
@@ -77,6 +128,9 @@ BatteryInfo GetBatteryInfo() {
         LOG(WARNING) << "Unable to call getCapacity: " << res.getDescription();
         capacity = INT32_MIN;
       }
+    }
+    if (capacity == INT32_MIN && ReadBatteryCapacityFromSysfs(&capacity)) {
+      LOG(INFO) << "Read battery capacity from sysfs: " << capacity;
     }
 
     LOG(INFO) << "charge_status " << toString(charge_status) << ", charging " << charging
