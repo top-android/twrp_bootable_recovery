@@ -1,0 +1,19 @@
+cc_library_shared {
+    name: "libtwrpdigest",
+
+    srcs: [
+        "twrp_digest.cpp",
+    ],
+
+    shared_libs: [
+        "libbase",
+        "libc++",
+        "libcrypto",
+    ],
+
+    cflags: [
+        "-fno-strict-aliasing",
+    ],
+
+    recovery_available: true,
+}

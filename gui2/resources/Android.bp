@@ -1,0 +1,10 @@
+prebuilt_res {
+    name: "gui2_fonts",
+    recovery: true,
+    install_in_root: true,
+    relative_install_path: "fonts",
+    srcs: [
+        "fonts/*.ttf",
+        "fonts/wqy-microhei_README.txt",
+    ],
+}

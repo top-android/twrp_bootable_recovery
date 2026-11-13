@@ -1,0 +1,358 @@
+/*
+	Copyright 2012 to 2017 bigbiff/Dees_Troy TeamWin
+	This file is part of TWRP/TeamWin Recovery Project.
+
+	TWRP is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+
+	TWRP is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with TWRP.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+
+#include <sys/mount.h>
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#include <ctype.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include <string.h>
+#include <stdio.h>
+#include <cutils/properties.h>
+
+#include <android-base/properties.h>
+#include <android-base/unique_fd.h>
+
+#include "twcommon.h"
+
+#include "otautil/sysutil.h"
+#include <ziparchive/zip_archive.h>
+#include "twinstall/install.h"
+#include "twinstall/verifier.h"
+#include "variables.h"
+#include "data.hpp"
+#include "partitions.hpp"
+#include "twrp_digest_driver.hpp"
+#include "twrp_functions.hpp"
+#include "gui2/console/stdio_adapter.h"
+#include "twinstall.h"
+#include "installcommand.h"
+#include "../twrpRepacker.hpp"
+
+#define AB_OTA "payload_properties.txt"
+
+enum zip_type {
+	UNKNOWN_ZIP_TYPE = 0,
+	UPDATE_BINARY_ZIP_TYPE,
+	AB_OTA_ZIP_TYPE
+};
+
+static int Prepare_Update_Binary(ZipArchiveHandle Zip) {
+	char arches[PATH_MAX];
+	property_get("ro.product.cpu.abilist", arches, "error");
+	if (strcmp(arches, "error") == 0)
+		property_get("ro.product.cpu.abi", arches, "error");
+	vector<string> split = TWFunc::SplitString(arches, ',', true);
+	std::vector<string>::iterator arch;
+	std::string base_name = UPDATE_BINARY_NAME;
+	base_name += "-";
+	ZipEntry64 binary_entry;
+	std::string update_binary_string(UPDATE_BINARY_NAME);
+	if (FindEntry(Zip, update_binary_string, &binary_entry) != 0) {
+		for (arch = split.begin(); arch != split.end(); arch++) {
+			std::string temp = base_name + *arch;
+			std::string binary_name(temp.c_str());
+			if (FindEntry(Zip, binary_name, &binary_entry) != 0) {
+				std::string binary_name(temp.c_str());
+				break;
+			}
+		}
+	}
+	LOGINFO("Extracting updater binary '%s'\n", UPDATE_BINARY_NAME);
+	unlink(TMP_UPDATER_BINARY_PATH);
+	android::base::unique_fd fd(
+		open(TMP_UPDATER_BINARY_PATH, O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0755));
+	if (fd == -1) {
+		return INSTALL_ERROR;
+	}
+	int32_t err = ExtractEntryToFile(Zip, &binary_entry, fd);
+	if (err != 0) {
+		LOGERR("Could not extract '%s'\n", UPDATE_BINARY_NAME);
+		return INSTALL_ERROR;
+	}
+
+	// If exists, extract file_contexts from the zip file
+	std::string file_contexts("file_contexts");
+	ZipEntry64 file_contexts_entry;
+	if (FindEntry(Zip, file_contexts, &file_contexts_entry) != 0) {
+		LOGINFO("Zip does not contain SELinux file_contexts file in its root.\n");
+	} else {
+		const string output_filename = "/file_contexts";
+		LOGINFO("Zip contains SELinux file_contexts file in its root. Extracting to %s\n", output_filename.c_str());
+		android::base::unique_fd fd(
+			open(output_filename.c_str(), O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0644));
+		if (fd == -1) {
+			return INSTALL_ERROR;
+		}
+		if (ExtractEntryToFile(Zip, &file_contexts_entry, fd)) {
+			LOGERR("Could not extract '%s'\n", output_filename.c_str());
+			return INSTALL_ERROR;
+		}
+	}
+	return INSTALL_SUCCESS;
+}
+
+
+static int Run_Update_Binary(const char *path, int* wipe_cache, zip_type ztype) {
+	int ret_val, pipe_fd[2], status, zip_verify;
+	char buffer[1024];
+	FILE* child_data;
+	pipe(pipe_fd);
+
+	std::vector<std::string> args;
+    if (ztype == UPDATE_BINARY_ZIP_TYPE) {
+		ret_val = update_binary_command(path, 0, pipe_fd[1], &args);
+    } else if (ztype == AB_OTA_ZIP_TYPE) {
+		ret_val = abupdate_binary_command(path, 0, pipe_fd[1], &args);
+	} else {
+		LOGERR("Unknown zip type %i\n", ztype);
+		ret_val = INSTALL_CORRUPT;
+	}
+    if (ret_val) {
+        close(pipe_fd[0]);
+        close(pipe_fd[1]);
+        return ret_val;
+    }
+
+	// Convert the vector to a NULL-terminated char* array suitable for execv.
+	const char* chr_args[args.size() + 1];
+	chr_args[args.size()] = NULL;
+	for (size_t i = 0; i < args.size(); i++)
+		chr_args[i] = args[i].c_str();
+
+	pid_t pid = fork();
+	if (pid == 0) {
+		close(pipe_fd[0]);
+		execve(chr_args[0], const_cast<char**>(chr_args), environ);
+		printf("E:Can't execute '%s': %s\n", chr_args[0], strerror(errno));
+		_exit(-1);
+	}
+	close(pipe_fd[1]);
+
+	*wipe_cache = 0;
+
+	DataManager::GetValue(TW_SIGNED_ZIP_VERIFY_VAR, zip_verify);
+	child_data = fdopen(pipe_fd[0], "r");
+	while (fgets(buffer, sizeof(buffer), child_data) != NULL) {
+		char* command = strtok(buffer, " \n");
+		if (command == NULL) {
+			continue;
+		} else if (strcmp(command, "progress") == 0) {
+			char* fraction_char = strtok(NULL, " \n");
+			char* seconds_char = strtok(NULL, " \n");
+
+			float fraction_float = strtof(fraction_char, NULL);
+			int seconds_float = strtol(seconds_char, NULL, 10);
+
+			if (zip_verify)
+				DataManager::ShowProgress(fraction_float * (1 - VERIFICATION_PROGRESS_FRACTION), seconds_float);
+			else
+				DataManager::ShowProgress(fraction_float, seconds_float);
+		} else if (strcmp(command, "set_progress") == 0) {
+			char* fraction_char = strtok(NULL, " \n");
+			float fraction_float = strtof(fraction_char, NULL);
+			DataManager::SetProgress(fraction_float, true);
+		} else if (strcmp(command, "ui_print") == 0) {
+			char* display_value = strtok(NULL, "\n");
+			if (display_value) {
+				gui_print("%s", display_value);
+			} else {
+				gui_print("\n");
+			}
+		} else if (strcmp(command, "wipe_cache") == 0) {
+			*wipe_cache = 1;
+		} else if (strcmp(command, "clear_display") == 0) {
+			// Do nothing, not supported by TWRP
+		} else if (strcmp(command, "log") == 0) {
+			printf("%s\n", strtok(NULL, "\n"));
+		} else {
+			LOGERR("unknown command [%s]\n", command);
+		}
+	}
+	fclose(child_data);
+
+	int waitrc = TWFunc::WaitForChild(pid, &status, "Updater");
+	if (waitrc != 0)
+		return INSTALL_ERROR;
+
+	return INSTALL_SUCCESS;
+}
+
+static constexpr const char* UPDATE_DYNAMIC_PART_OP_LIST_NAME = "dynamic_partitions_op_list";
+static constexpr const char* UPDATE_SUPER_IMAGE_ZST = "super.img.zst";
+static constexpr const char* UPDATE_SUPER_ZST = "super.zst";
+
+bool isUpdatePkg(ZipArchiveHandle Zip) {
+	ZipEntry64 find_entry;
+	if (FindEntry(Zip, UPDATE_DYNAMIC_PART_OP_LIST_NAME, &find_entry) == 0) return true;
+	if (FindEntry(Zip, UPDATE_SUPER_IMAGE_ZST, &find_entry) == 0) return true;
+	if (FindEntry(Zip, UPDATE_SUPER_ZST, &find_entry) == 0) return true;
+#ifdef AB_OTA_UPDATER
+	if (FindEntry(Zip, AB_OTA, &find_entry) == 0) return true;
+#endif
+	return false;
+}
+
+int TWinstall_zip(const char* path, int* wipe_cache, bool check_for_digest) {
+	int ret_val, zip_verify = 1, unmount_system = 1, reflashtwrp = 0;
+
+	gui2_console::info("installing_zip", path);
+	if (strlen(path) < 9 || strncmp(path, "/sideload", 9) != 0) {
+		string digest_str;
+		string Full_Filename = path;
+
+		if (check_for_digest) {
+			gui2_console::info("check_for_digest");
+			if (*path != '@' && !TwrpDigestDriver::CheckFileDigest(Full_Filename)) {
+				LOGERR("Aborting zip install: Digest verification failed\n");
+				return INSTALL_CORRUPT;
+			}
+		}
+	}
+
+	DataManager::GetValue(TW_UNMOUNT_SYSTEM, unmount_system);
+
+	DataManager::GetValue(TW_SIGNED_ZIP_VERIFY_VAR, zip_verify);
+	DataManager::SetProgress(0);
+
+	auto package = Package::CreateMemoryPackage(path);
+	if (!package) {
+		return INSTALL_CORRUPT;
+	}
+
+	if (zip_verify) {
+		gui2_console::info("verify_zip_sig");
+		static constexpr const char* CERTIFICATE_ZIP_FILE = "/system/etc/security/otacerts.zip";
+		std::vector<Certificate> loaded_keys = LoadKeysFromZipfile(CERTIFICATE_ZIP_FILE);
+		if (loaded_keys.empty()) {
+			LOGERR("Failed to load keys\n");
+			return -1;
+		}
+		LOGINFO("%zu key(s) loaded from %s\n", loaded_keys.size(), CERTIFICATE_ZIP_FILE);
+
+		ret_val = verify_file(package.get(), loaded_keys, std::bind(&DataManager::SetProgress, std::placeholders::_1, false));
+		if (ret_val != VERIFY_SUCCESS) {
+			LOGINFO("Zip signature verification failed: %i\n", ret_val);
+			gui2_console::log_error("verify_zip_fail");
+			return -1;
+		} else {
+			gui2_console::info("verify_zip_done");
+		}
+	}
+
+	ZipArchiveHandle Zip = package->GetZipArchiveHandle();
+	if (!Zip) {
+		return INSTALL_CORRUPT;
+	}
+
+	bool _isUpdatePkg = isUpdatePkg(Zip);
+
+	if (unmount_system) {
+		gui2_console::info("unmount_system");
+		if(!PartitionManager.UnmountByPath(PartitionManager.GetAndroidRootPath(), true)) {
+			gui2_console::log_error("unmount_system_err");
+			return -1;
+		}
+		unlink("/system");
+		mkdir("/system", 0755);
+	}
+
+	time_t start, stop;
+	time(&start);
+
+	std::string update_binary_name(UPDATE_BINARY_NAME);
+	ZipEntry64 update_binary_entry;
+	if (FindEntry(Zip, update_binary_name, &update_binary_entry) == 0) {
+		LOGINFO("Update binary zip\n");
+		// Additionally verify the compatibility of the package.
+		if (!verify_package_compatibility(Zip)) {
+			gui2_console::log_error("zip_compatible_err");
+			ret_val = INSTALL_CORRUPT;
+		} else {
+			ret_val = Prepare_Update_Binary(Zip);
+			if (ret_val == INSTALL_SUCCESS)
+				ret_val = Run_Update_Binary(path, wipe_cache, UPDATE_BINARY_ZIP_TYPE);
+		}
+	} else {
+		std::string ab_binary_name(AB_OTA);
+		ZipEntry64 ab_binary_entry;
+		if (FindEntry(Zip, ab_binary_name, &ab_binary_entry) == 0) {
+#ifdef AB_OTA_UPDATER
+			LOGINFO("AB zip\n");
+			gui2_console::highlight("flash_ab_inactive", PartitionManager.GetActiveSlotDisplay()=="A"?"B":"A");
+			// We need this so backuptool can do its magic
+			bool system_mount_state = PartitionManager.IsMountedByPath(PartitionManager.GetAndroidRootPath());
+			bool vendor_mount_state = PartitionManager.IsMountedByPath("/vendor");
+			PartitionManager.MountByPath(PartitionManager.GetAndroidRootPath(), false);
+			PartitionManager.MountByPath("/vendor", false);
+			TWFunc::CopyFile("/system/bin/sh", "/tmp/sh", 0755);
+			mount("/tmp/sh", "/system/bin/sh", "auto", MS_BIND, NULL);
+			ret_val = Run_Update_Binary(path, wipe_cache, AB_OTA_ZIP_TYPE);
+			umount("/system/bin/sh");
+			unlink("/tmp/sh");
+			if (!vendor_mount_state)
+				PartitionManager.UnmountByPath("/vendor", false);
+			if (!system_mount_state)
+				PartitionManager.UnmountByPath(PartitionManager.GetAndroidRootPath(), false);
+			if (ret_val == INSTALL_SUCCESS) {
+				if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
+					PartitionManager.UnlockBlockPartitions();
+					PartitionManager.PrepareAllSuperVolumes();
+					gui2_console::warning("mount_vab_partitions");
+				}
+				gui2_console::warning("flash_ab_reboot");
+				DataManager::GetValue(TW_AUTO_REFLASHTWRP_VAR, reflashtwrp);
+				if (reflashtwrp) {
+					twrpRepacker repacker;
+					repacker.Flash_Current_Twrp();
+				}
+			}
+#else
+			gui2_console::log_error("no_ab_support");
+			ret_val = INSTALL_CORRUPT;
+#endif
+		} else {
+			ret_val = INSTALL_CORRUPT;
+		}
+	}
+	time(&stop);
+	int total_time = (int) difftime(stop, start);
+	if (ret_val == INSTALL_CORRUPT) {
+		gui2_console::log_error("invalid_zip_format");
+	} else {
+		LOGINFO("Install took %i second(s).\n", total_time);
+	}
+
+	if (ret_val == INSTALL_SUCCESS) gui2_console::highlight("install_took_seconds_msg", total_time);
+
+	if (_isUpdatePkg && ret_val == INSTALL_SUCCESS) {
+		if (DataManager::GetIntValue(TW_AUTO_DISABLE_AVB2_VAR)) PartitionManager.DisableAvb2(true);
+	}
+
+	return ret_val;
+}
