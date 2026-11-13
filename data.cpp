@@ -732,6 +732,8 @@ void DataManager::SetDefaultValues() {
   persist_["tw_mount_system_ro"] = 2;
   persist_["tw_never_show_system_ro_page"] = false;
   persist_["tw_language"] = TW_DEFAULT_LANGUAGE;
+  persist_["tw_gui2_theme"] = 1;
+  persist_["tw_show_seconds"] = 1;
   LOGINFO("LANG: %s\n", TW_DEFAULT_LANGUAGE);
 
   data_["tw_has_adopted_storage"] = false;
@@ -841,13 +843,16 @@ int DataManager::GetMagicValue(const std::string& key, std::string& value) {
     localtime_r(&now, &local);
     int tw_military_time;
     GetValue(TW_MILITARY_TIME, tw_military_time);
+    int tw_show_seconds = 1;
+    GetValue("tw_show_seconds", tw_show_seconds);
 
+    const std::string seconds = tw_show_seconds ? std::format(":{:02}", local.tm_sec) : "";
     if (tw_military_time) {
-      value = std::format("{:02}:{:02}", local.tm_hour, local.tm_min);
+      value = std::format("{:02}:{:02}{}", local.tm_hour, local.tm_min, seconds);
     } else {
       int hour12 = local.tm_hour % 12;
       if (hour12 == 0) hour12 = 12;
-      value = std::format("{:02}:{:02} {}", hour12, local.tm_min,
+      value = std::format("{:02}:{:02}{} {}", hour12, local.tm_min, seconds,
                           local.tm_hour < 12 ? "AM" : "PM");
     }
     return 0;

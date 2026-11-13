@@ -28,6 +28,7 @@ extern const language_pack kEnglish = {
   "Time format",
   "12-hour clock",
   "24-hour clock",
+  "Show seconds",
   "Select time zone",
   "UTC offset",
   "None",

@@ -63,10 +63,12 @@ struct page_state {
   int pending_offset_index = 0;
   bool pending_military_time = false;
   bool pending_dst = false;
+  bool pending_show_seconds = false;
   lv_obj_t* timezone_cards[24] = {};
   lv_obj_t* offset_cards[4] = {};
   lv_obj_t* format_cards[2] = {};
   lv_obj_t* dst_card = nullptr;
+  lv_obj_t* seconds_card = nullptr;
   lv_obj_t* current_timezone_label = nullptr;
 
   lv_obj_t* hardware_error_label = nullptr;

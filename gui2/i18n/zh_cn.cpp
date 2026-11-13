@@ -28,6 +28,7 @@ extern const language_pack kSimplifiedChinese = {
   "时间格式",
   "12 小时制",
   "24 小时制",
+  "显示秒",
   "选择时区",
   "UTC 偏移",
   "无",

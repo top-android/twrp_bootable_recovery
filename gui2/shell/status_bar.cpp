@@ -96,7 +96,9 @@ void layout_status_bar(const status_bar_view& view, const gui2_core::ui_metrics&
   const int content_height = metrics.status_height - metrics.status_top_padding;
   const int y =
       metrics.status_top_padding + (content_height - metrics.status_font->line_height) / 2;
-  lv_obj_align(view.time_label, LV_ALIGN_TOP_LEFT, metrics.outer_margin, y);
+  // Keep the clock clear of the left camera cutout.
+  lv_obj_align(view.time_label, LV_ALIGN_TOP_LEFT,
+               metrics.outer_margin + gui2_core::ui_px(96), y);
   if (view.recording_indicator != nullptr)
     lv_obj_align_to(view.recording_indicator, view.time_label, LV_ALIGN_OUT_RIGHT_MID,
                     gui2_core::ui_px(12), 0);

@@ -56,6 +56,7 @@ struct language_pack {
   const char* time_format;
   const char* twelve_hour;
   const char* twenty_four_hour;
+  const char* show_seconds;
   const char* select_timezone;
   const char* timezone_offset;
   const char* offset_none;

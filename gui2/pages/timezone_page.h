@@ -13,6 +13,7 @@ struct timezone_page_view {
   lv_obj_t* offset_cards[4] = {};
   lv_obj_t* format_cards[2] = {};
   lv_obj_t* dst_card = nullptr;
+  lv_obj_t* seconds_card = nullptr;
   lv_obj_t* current_timezone_label = nullptr;
 };
 
@@ -28,6 +29,8 @@ struct timezone_page_options {
   lv_event_cb_t offset_event_callback = nullptr;
   lv_event_cb_t format_event_callback = nullptr;
   lv_event_cb_t dst_event_callback = nullptr;
+  lv_event_cb_t seconds_event_callback = nullptr;
+  bool show_seconds = false;
   lv_event_cb_t press_guard_callback = nullptr;
 };
 

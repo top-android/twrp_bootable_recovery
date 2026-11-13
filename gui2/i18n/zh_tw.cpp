@@ -28,6 +28,7 @@ extern const language_pack kTraditionalChinese = {
   "時間格式",
   "12 小時制",
   "24 小時制",
+  "顯示秒",
   "選擇時區",
   "UTC 偏移",
   "無",

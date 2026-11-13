@@ -319,10 +319,12 @@ static int& pending_timezone_index = page_state.pending_timezone_index;
 static int& pending_offset_index = page_state.pending_offset_index;
 static bool& pending_military_time = page_state.pending_military_time;
 static bool& pending_dst = page_state.pending_dst;
+static bool& pending_show_seconds = page_state.pending_show_seconds;
 static lv_obj_t* (&timezone_cards)[24] = page_state.timezone_cards;
 static lv_obj_t* (&offset_cards)[4] = page_state.offset_cards;
 static lv_obj_t* (&format_cards)[2] = page_state.format_cards;
 static lv_obj_t*& dst_card = page_state.dst_card;
+static lv_obj_t*& seconds_card = page_state.seconds_card;
 static lv_obj_t*& current_timezone_label = page_state.current_timezone_label;
 static lv_obj_t*& hardware_error_label = page_state.hardware_error_label;
 static bool& hardware_settings_dirty = page_state.hardware_settings_dirty;
@@ -791,7 +793,8 @@ static void apply_language_event_cb(lv_event_t* event) {
 static void refresh_time_choices(void) {
   gui2_pages::refresh_time_choices(format_cards, pending_military_time, timezone_cards,
                                    pending_timezone_index, offset_cards, pending_offset_index,
-                                   dst_card, pending_dst, ui.card_color);
+                                   dst_card, pending_dst, seconds_card, pending_show_seconds,
+                                   ui.card_color);
 }
 
 static void time_format_event_cb(lv_event_t* event) {
@@ -824,6 +827,12 @@ static void dst_event_cb(lv_event_t* event) {
   refresh_time_choices();
 }
 
+static void seconds_event_cb(lv_event_t* event) {
+  if (lv_event_get_code(event) != LV_EVENT_CLICKED || !accept_click(event)) return;
+  pending_show_seconds = !pending_show_seconds;
+  refresh_time_choices();
+}
+
 static void apply_timezone_event_cb(lv_event_t* event) {
   if (lv_event_get_code(event) != LV_EVENT_CLICKED || !accept_click(event) || settings == nullptr)
     return;
@@ -833,7 +842,8 @@ static void apply_timezone_event_cb(lv_event_t* event) {
       settings->set("tw_military_time", pending_military_time ? "1" : "0") &&
       settings->set("tw_time_zone_guisel", timezone_values[pending_timezone_index]) &&
       settings->set("tw_time_zone_guioffset", timezone_offsets[pending_offset_index]) &&
-      settings->set("tw_time_zone_guidst", pending_dst ? "1" : "0");
+      settings->set("tw_time_zone_guidst", pending_dst ? "1" : "0") &&
+      settings->set("tw_show_seconds", pending_show_seconds ? "1" : "0");
   if (saved) {
     settings->update_timezone();
     if (!settings->flush()) return;
@@ -5398,6 +5408,7 @@ static void export_log_event_cb(lv_event_t* event) {
 static void show_timezone_page(page_transition transition) {
   pending_military_time = settings != nullptr && settings->get_int("tw_military_time", 0) != 0;
   pending_dst = settings != nullptr && settings->get_int("tw_time_zone_guidst", 0) != 0;
+  pending_show_seconds = settings != nullptr && settings->get_int("tw_show_seconds", 1) != 0;
   pending_offset_index = 0;
   if (settings != nullptr) {
     const std::string offset = settings->get_string("tw_time_zone_guioffset", "0");
@@ -5441,12 +5452,15 @@ static void show_timezone_page(page_transition transition) {
   options.offset_event_callback = offset_event_cb;
   options.format_event_callback = time_format_event_cb;
   options.dst_event_callback = dst_event_cb;
+  options.seconds_event_callback = seconds_event_cb;
+  options.show_seconds = pending_show_seconds;
   options.press_guard_callback = press_cancel_guard_cb;
   const auto view = gui2_pages::build_timezone_page(options);
   for (int i = 0; i < 24; ++i) timezone_cards[i] = view.timezone_cards[i];
   for (int i = 0; i < 4; ++i) offset_cards[i] = view.offset_cards[i];
   for (int i = 0; i < 2; ++i) format_cards[i] = view.format_cards[i];
   dst_card = view.dst_card;
+  seconds_card = view.seconds_card;
   current_timezone_label = view.current_timezone_label;
 
   refresh_time_choices();
@@ -5773,7 +5787,7 @@ static void build_page(const gui2_pages::page_request& request) {
 }
 
 static bool theme_is_dark(void) {
-  return settings == nullptr || settings->get_int("tw_gui2_theme", 0) == 0;
+  return settings == nullptr || settings->get_int("tw_gui2_theme", 1) == 0;
 }
 
 static void apply_lvgl_theme(bool dark) {

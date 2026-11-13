@@ -97,6 +97,9 @@ timezone_page_view build_timezone_page(const timezone_page_options& options) {
   view.dst_card = gui2_components::create_choice_card(
       view.body, metrics, strings.use_dst, metrics.content_width, choice_height,
       options.dst_event_callback, nullptr, options.press_guard_callback);
+  view.seconds_card = gui2_components::create_choice_card(
+      view.body, metrics, strings.show_seconds, metrics.content_width, choice_height,
+      options.seconds_event_callback, nullptr, options.press_guard_callback);
   view.current_timezone_label = create_section_label(view.body, metrics, "");
   if (options.current_timezone_text != nullptr)
     lv_label_set_text(view.current_timezone_label, options.current_timezone_text);

@@ -131,7 +131,7 @@ TWPartitionManager::TWPartitionManager() {
 #ifdef AB_OTA_UPDATER
   active_slot_display_ = "";
   const std::string slot = android::base::GetProperty("ro.boot.slot_suffix", "");
-  SetActiveSlot(slot == "_a" ? "A" : slot == "_b" ? "B" : "");
+  if (!slot.empty()) SetActiveSlot(slot == "_a" ? "A" : slot == "_b" ? "B" : "");
 #endif
 }
 
