@@ -220,6 +220,11 @@ void update_splash(splash_view* view, const char* text, float fraction) {
 
 void dismiss_splash(splash_view* view) {
   if (view == nullptr || view->root == nullptr) return;
+  // Lay out and draw the page underneath before the splash is removed. The
+  // delete otherwise marks the whole screen dirty and the next refresh can
+  // reach the panel with only the theme background painted (white flash).
+  lv_obj_update_layout(lv_scr_act());
+  lv_refr_now(nullptr);
   lv_obj_fade_out(view->root, kFadeMs, 0);
   lv_obj_delete_delayed(view->root, kFadeMs + 20);
   arrow = nullptr;

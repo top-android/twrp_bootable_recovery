@@ -257,7 +257,8 @@ void twrp_screen_backend::tick(uint64_t monotonic_ms) {
   // gui_init, once the display is up.
   if (last_tick_ms_ == 0) {
     printf("TW_SCREEN_BLANK_ON_BOOT := true\n");
-    blank();
+    // Do not blank on the first tick: the splash is already presented and
+    // blank+unblank here produces a 900 -> 0 -> 900 backlight flash.
     resetTimerAndUnblank();
   }
 #endif

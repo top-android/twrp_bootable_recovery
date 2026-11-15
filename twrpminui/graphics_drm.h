@@ -32,7 +32,7 @@
 
 #define NUM_MAIN 1
 #define NUM_PLANES 4
-#define DEFAULT_NUM_LMS 2
+#define DEFAULT_NUM_LMS 1
 
 #define SPR_INIT_PARAM_SIZE_1 4
 #define SPR_INIT_PARAM_SIZE_2 5

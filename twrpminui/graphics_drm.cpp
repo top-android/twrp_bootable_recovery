@@ -759,6 +759,8 @@ int MinuiBackendDrm::Initdisplay(DrmConnector index) {
       drmModeGetPlaneResources(drm_fd), drmModeFreePlaneResources);
   if (!options) return -1;
   uint32_t selected = 0;
+  Plane fallback{};
+  bool have_fallback = false;
   // TWRP: signed reverse traversal avoids CLO's unsigned underflow on missing pipes.
   for (int i = static_cast<int>(options->count_planes) - 1; i >= 0 && selected < number_of_lms; --i) {
     Plane candidate{};
@@ -771,12 +773,24 @@ int MinuiBackendDrm::Initdisplay(DrmConnector index) {
     bool primary = false;
     if (load_properties(candidate.plane->plane_id, DRM_MODE_OBJECT_PLANE, &candidate)) {
       for (uint32_t j = 0; j < candidate.props->count_props; ++j) {
-        if (!strcmp(candidate.props_info[j]->name, "capabilities"))
-          primary = is_primary_plane(drm_fd, candidate.props->prop_values[j]);
+        const char* name = candidate.props_info[j]->name;
+        if (strcmp(name, "capabilities") && strcmp(name, "type")) continue;
+        const uint32_t value = candidate.props->prop_values[j];
+        // Standard DRM exposes the plane type as an ENUM bitmask; CLO SDE
+        // instead stores a "capabilities" blob with primary_smart_plane_id.
+        if (candidate.props_info[j]->flags & DRM_MODE_PROP_ENUM)
+          primary = (value & DRM_PLANE_TYPE_PRIMARY) != 0;
+        else
+          primary = is_primary_plane(drm_fd, value);
       }
     }
     if (primary) {
       plane_res[selected++] = candidate;
+    } else if (!have_fallback) {
+      // MTK reports every overlay pipe as DRM_PLANE_TYPE_OVERLAY; keep the
+      // first one so a missing PRIMARY plane can still become the scanout.
+      fallback = candidate;
+      have_fallback = true;
     } else {
       if (candidate.props_info) {
         for (uint32_t j = 0; j < candidate.props->count_props; ++j)
@@ -786,6 +800,22 @@ int MinuiBackendDrm::Initdisplay(DrmConnector index) {
       if (candidate.props) drmModeFreeObjectProperties(candidate.props);
       drmModeFreePlane(candidate.plane);
     }
+  }
+  if (selected == 0 && have_fallback) {
+    number_of_lms = 1;
+    plane_res[selected++] = fallback;
+    have_fallback = false;
+    fprintf(stderr, "TWRP DRM: display %d has no PRIMARY plane, using plane %u as scanout\n",
+            index, plane_res[0].plane->plane_id);
+  }
+  if (have_fallback) {
+    if (fallback.props_info) {
+      for (uint32_t j = 0; j < fallback.props->count_props; ++j)
+        drmModeFreeProperty(fallback.props_info[j]);
+      free(fallback.props_info);
+    }
+    if (fallback.props) drmModeFreeObjectProperties(fallback.props);
+    if (fallback.plane) drmModeFreePlane(fallback.plane);
   }
   if (selected != number_of_lms) {
     fprintf(stderr, "TWRP DRM: display %d found %u/%u primary planes for CRTC index %d\n",
