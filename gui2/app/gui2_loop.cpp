@@ -76,8 +76,13 @@ void run_gui2_loop(gui2_backend::screen_backend* screen, lv_indev_t* pointer_ind
     if (callbacks.after_present != nullptr) callbacks.after_present(user_data, presented);
     delay_ms = perf_manager.ClampTimeoutMs(delay_ms);
 
-    if (delay_ms == LV_NO_TIMER_READY || delay_ms > 50) delay_ms = 10;
-    if (delay_ms == 0) delay_ms = 1;
+    if (presented) {
+      // gr_flip already waited for vsync; render the next frame immediately.
+      delay_ms = 0;
+    } else {
+      if (delay_ms == LV_NO_TIMER_READY || delay_ms > 50) delay_ms = 10;
+      if (delay_ms == 0) delay_ms = 1;
+    }
     const uint64_t elapsed_ms = monotonic_ms() - loop_start_ms;
     if (delay_ms > elapsed_ms) usleep((delay_ms - elapsed_ms) * 1000);
   }

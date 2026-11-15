@@ -93,6 +93,10 @@ bool gui2_display_present(gui2_backend::screen_backend* screen, uint64_t monoton
     return false;
   }
 
+  // Render now so the frame is ready before the blocking page flip. Without
+  // LVGL's own refresh timer this makes the cadence follow vsync.
+  lv_refr_now(nullptr);
+
   // A refresh may contain multiple flushes; present before capturing.
   const bool presented = frame_dirty;
   if (presented) {
@@ -146,6 +150,9 @@ lv_display_t* gui2_display_init(void) {
   }
 
   lv_display_set_buffers(display, buffer, nullptr, buffer_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
+  // Refresh is driven by page-flip completion in gui2_display_present(); the
+  // built-in free-running 16ms timer beats against the 16.6ms vsync.
+  lv_display_delete_refr_timer(display);
   display_buffer = buffer;
   recording_shadow_width = width;
   recording_shadow_height = height;
