@@ -11,6 +11,7 @@
 #include "twrpminui/minui.h"
 
 static bool frame_dirty;
+static bool first_frame_presented;
 static bool recording_active;
 static void* display_buffer;
 static uint64_t last_recording_sample_ms;
@@ -93,15 +94,26 @@ bool gui2_display_present(gui2_backend::screen_backend* screen, uint64_t monoton
     return false;
   }
 
+  // If the backend came up with the panel blanked, unblank once so the first
+  // atomic commit can enable the DRM connector.
+  if (screen != nullptr && screen->is_screen_off() && !first_frame_presented) {
+    screen->screen_on();
+  }
+
   // Render now so the frame is ready before the blocking page flip. Without
   // LVGL's own refresh timer this makes the cadence follow vsync.
   lv_refr_now(nullptr);
 
-  // A refresh may contain multiple flushes; present before capturing.
-  const bool presented = frame_dirty;
+  // A refresh may contain multiple flushes; present before capturing. The
+  // first frame is always submitted so DRM gets its initial modeset.
+  const bool presented = frame_dirty || !first_frame_presented;
   if (presented) {
     gr_flip();
     frame_dirty = false;
+    if (!first_frame_presented) {
+      first_frame_presented = true;
+      fprintf(stderr, "gui2: first frame flipped\n");
+    }
   }
 
   submit_recording_frame(screen, monotonic_ms);
@@ -112,6 +124,7 @@ void gui2_display_deinit(void) {
   free(display_buffer);
   display_buffer = nullptr;
   frame_dirty = false;
+  first_frame_presented = false;
   recording_active = false;
   last_recording_sample_ms = 0;
   recording_shadow_buffer.clear();
@@ -157,5 +170,8 @@ lv_display_t* gui2_display_init(void) {
   recording_shadow_width = width;
   recording_shadow_height = height;
   recording_shadow_buffer.assign(static_cast<size_t>(width) * height * 4, 0);
+  // Force the first refresh so the initial atomic commit has scanout data.
+  lv_obj_invalidate(lv_screen_active());
+  lv_refr_now(nullptr);
   return display;
 }
