@@ -1394,17 +1394,6 @@ int MinuiBackendDrm::Present(DrmConnector index) {
   if (output.displayed_buffer == output.current_buffer) return 0;
   const uint32_t fb_id = output.GRSurfaceDrms[output.current_buffer]->fb_id;
   int ret = -EINVAL;
-  // Reap the previous flip before submitting this one. Rendering and copying
-  // for the current frame already overlapped the vsync interval, so only the
-  // remainder is waited; returning right after submission lets the next frame
-  // render while this flip is scanning out instead of adding a full vsync.
-  if (output.waiting_for_flip) {
-    const int wait_ret = wait_for_page_flip(drm_fd, &output.waiting_for_flip);
-    if (wait_ret) {
-      output.page_flip = false;
-      printf("TWRP: page flip wait failed rc=%d, using blocking presentation\n", wait_ret);
-    }
-  }
   if (output.page_flip) {
     // Event userdata lives with the backend, including after a timeout.
     output.waiting_for_flip = true;
@@ -1413,12 +1402,13 @@ int MinuiBackendDrm::Present(DrmConnector index) {
                            DRM_MODE_PAGE_FLIP_EVENT, &output.waiting_for_flip)
         : UpdatePlaneFB(index, DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_PAGE_FLIP_EVENT,
                          &output.waiting_for_flip);
+    const bool submitted = ret == 0;
+    if (submitted) ret = wait_for_page_flip(drm_fd, &output.waiting_for_flip);
     if (!ret) {
       output.page_flip_failures = 0;
-      // Legacy modeset keeps the historical synchronous behaviour.
-      if (legacy_modeset) ret = wait_for_page_flip(drm_fd, &output.waiting_for_flip);
-    } else {
-      output.waiting_for_flip = false;
+    } else if (legacy_modeset || submitted || ++output.page_flip_failures >= 8) {
+      // TWRP: keep the historical atomic retry tolerance, but never reuse event
+      // userdata after an accepted flip timed out or failed to complete.
       output.page_flip = false;
       printf("TWRP: page flip failed rc=%d, using blocking presentation\n", ret);
     }

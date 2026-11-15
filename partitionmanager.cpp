@@ -2241,7 +2241,15 @@ void TWPartitionManager::UnmountMainPartitions() const {
   // Also unmounts boot if boot is mountable
   LOGINFO("Unmounting main partitions...\n");
 
-  if (FindPartitionByPath("/vendor")) UnmountByPath("/vendor", false);
+  if (FindPartitionByPath("/vendor")) {
+    if (!UnmountByPath("/vendor", false)) {
+      // Vendor HALs (keymaster/gatekeeper/thh/soter) mmap /vendor and init
+      // immediately restarts them, so a normal unmount can stay busy during
+      // startup. Match the reboot backend and fall back to a lazy unmount.
+      LOGINFO("Vendor partition is busy; using lazy unmount\n");
+      UnmountByPath("/vendor", false, MNT_DETACH);
+    }
+  }
   if (FindPartitionByPath(GetAndroidRootPath())) UnmountByPath(GetAndroidRootPath(), true);
   if (FindPartitionByPath("/product")) UnmountByPath("/product", false);
   if (!datamedia) UnmountByPath("/data", true);
