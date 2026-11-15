@@ -516,7 +516,9 @@ bool TWPartitionManager::SetupFstabPartitions(const bool display_error) {
     }
   }
 #ifndef USE_VENDOR_LIBS
-  if (ven && !ven->Unmount(display_error)) return false;
+  // Startup keeps /vendor mounted: keymaster/gatekeeper/thh/soter mmap it and
+  // init restarts them; decryption needs those HALs. Install and repack paths
+  // still unmount /vendor explicitly.
   if (sys && !sys->Unmount(display_error)) return false;
 #endif
 

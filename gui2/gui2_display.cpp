@@ -12,6 +12,7 @@
 
 static bool frame_dirty;
 static bool first_frame_presented;
+static uint64_t presented_frames;
 static bool recording_active;
 static void* display_buffer;
 static uint64_t last_recording_sample_ms;
@@ -90,14 +91,15 @@ static void flush_cb(lv_display_t* display, const lv_area_t* area, uint8_t* px_m
 bool gui2_display_present(gui2_backend::screen_backend* screen, uint64_t monotonic_ms) {
   recording_active = (screen != nullptr && screen->is_recording());
   if (screen != nullptr && screen->is_screen_off()) {
-    submit_recording_frame(screen, monotonic_ms);
-    return false;
-  }
-
-  // If the backend came up with the panel blanked, unblank once so the first
-  // atomic commit can enable the DRM connector.
-  if (screen != nullptr && screen->is_screen_off() && !first_frame_presented) {
-    screen->screen_on();
+    // Unblank once before the first flip so DRM can enable; afterwards an
+    // explicit screen off must stay off until the timeout handler wakes it.
+    if (!first_frame_presented) {
+      screen->screen_on();
+    }
+    if (screen->is_screen_off()) {
+      submit_recording_frame(screen, monotonic_ms);
+      return false;
+    }
   }
 
   // Render now so the frame is ready before the blocking page flip. Without
@@ -110,9 +112,13 @@ bool gui2_display_present(gui2_backend::screen_backend* screen, uint64_t monoton
   if (presented) {
     gr_flip();
     frame_dirty = false;
+    ++presented_frames;
     if (!first_frame_presented) {
       first_frame_presented = true;
       fprintf(stderr, "gui2: first frame flipped\n");
+    } else if (presented_frames % 60 == 0) {
+      fprintf(stderr, "gui2: presented frame %llu\n",
+              static_cast<unsigned long long>(presented_frames));
     }
   }
 
