@@ -54,7 +54,7 @@ void set_card_grid(lv_obj_t* body) {
   if (body == nullptr || grid_columns() < 2) return;
   lv_obj_set_flex_flow(body, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_style_pad_column(body, ui.card_gap, LV_PART_MAIN);
-  lv_obj_add_flag(body, LV_OBJ_FLAG_USER_1);
+  lv_obj_set_flag(body, LV_OBJ_FLAG_USER_1, true);
 }
 
 int card_width_in(lv_obj_t* parent) {
@@ -74,13 +74,13 @@ void equalize_card_grids(lv_obj_t* root) {
       int32_t tallest = 0;
       for (; end < count; ++end) {
         lv_obj_t* child = lv_obj_get_child(root, end);
-        if (lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) continue;
+        if (lv_obj_is_hidden(child)) continue;
         if (lv_obj_get_y(child) != y) break;
         tallest = std::max(tallest, lv_obj_get_height(child));
       }
       for (uint32_t i = first; end - first > 1 && i < end; ++i) {
         lv_obj_t* child = lv_obj_get_child(root, i);
-        if (!lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) lv_obj_set_height(child, tallest);
+        if (!lv_obj_is_hidden(child)) lv_obj_set_height(child, tallest);
       }
       first = std::max(end, first + 1);
     }

@@ -798,7 +798,7 @@ void keyboard::hidden_anim_done(lv_anim_t* anim) {
 static void reveal_field(lv_obj_t* textarea, lv_obj_t* keyboard_root, int resting_y) {
   if (textarea == nullptr || keyboard_root == nullptr) return;
   lv_obj_t* scroller = lv_obj_get_parent(textarea);
-  while (scroller != nullptr && !lv_obj_has_flag(scroller, LV_OBJ_FLAG_SCROLLABLE))
+  while (scroller != nullptr && !lv_obj_is_scrollable(scroller))
     scroller = lv_obj_get_parent(scroller);
   if (scroller == nullptr) return;
   lv_obj_update_layout(scroller);

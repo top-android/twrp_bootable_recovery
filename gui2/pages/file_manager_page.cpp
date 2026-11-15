@@ -61,7 +61,7 @@ lv_obj_t* create_icon(lv_obj_t* parent, const lv_image_dsc_t* asset, int size, l
   lv_obj_set_style_border_width(holder, 0, LV_PART_MAIN);
   lv_obj_set_style_pad_all(holder, 0, LV_PART_MAIN);
   gui2_core::disable_scrolling(holder);
-  lv_obj_remove_flag(holder, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_clickable(holder, false);
   lv_obj_t* image = gui2_components::create_svg_image(holder, asset, size, size);
   if (image != nullptr) {
     lv_obj_center(image);
@@ -531,7 +531,7 @@ lv_obj_t* open_sort_menu(const sort_menu_options& options) {
 
 void close_sort_menu(lv_obj_t* backdrop, bool animate_out) {
   if (backdrop == nullptr) return;
-  lv_obj_remove_flag(backdrop, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_clickable(backdrop, false);
   if (!animate_out) {
     lv_obj_delete(backdrop);
     return;
