@@ -117,8 +117,9 @@ bool gui2_display_present(gui2_backend::screen_backend* screen, uint64_t monoton
       first_frame_presented = true;
       fprintf(stderr, "gui2: first frame flipped\n");
     } else if (presented_frames % 60 == 0) {
-      fprintf(stderr, "gui2: presented frame %llu\n",
-              static_cast<unsigned long long>(presented_frames));
+      fprintf(stderr, "gui2: presented frame %llu at %llu ms\n",
+              static_cast<unsigned long long>(presented_frames),
+              static_cast<unsigned long long>(monotonic_ms));
     }
   }
 
@@ -169,10 +170,12 @@ lv_display_t* gui2_display_init(void) {
   }
 
   lv_display_set_buffers(display, buffer, nullptr, buffer_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
-  // Keep LVGL's refresh timer alive: lv_refr_now() delegates to it, so deleting
-  // it makes every manual refresh a no-op (only the forced first frame, an
-  // empty init buffer, would ever be flipped). The GUI2 loop still drives one
-  // refresh per presented frame.
+  // Keep the timer object because lv_refr_now() delegates to it, but pause its
+  // automatic 16ms tick: it beats against the 16.6ms vsync. Refresh is driven
+  // by gui2_display_present() right after each page flip completes.
+  if (lv_timer_t* refr = lv_display_get_refr_timer(display)) {
+    lv_timer_pause(refr);
+  }
   display_buffer = buffer;
   recording_shadow_width = width;
   recording_shadow_height = height;
