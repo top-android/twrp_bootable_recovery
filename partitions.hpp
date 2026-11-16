@@ -768,7 +768,7 @@ public:
   void MountAllStorage() const;
 
   // Unmounts system and data if not data/media and boot if boot is mountable
-  void UnmountMainPartitions(bool unmount_vendor = true) const;
+  void UnmountMainPartitions() const;
 
   // Repartitions the sdcard
   int PartitionSdCard() const;

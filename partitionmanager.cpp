@@ -516,15 +516,13 @@ bool TWPartitionManager::SetupFstabPartitions(const bool display_error) {
     }
   }
 #ifndef USE_VENDOR_LIBS
-  // Startup keeps /vendor mounted: keymaster/gatekeeper/thh/soter mmap it and
-  // init restarts them; decryption needs those HALs. Install and repack paths
-  // still unmount /vendor explicitly.
+  if (ven && !ven->Unmount(display_error)) return false;
   if (sys && !sys->Unmount(display_error)) return false;
 #endif
 
   // Finish startup mount cleanup before starting HALs and recovering keys.
   if (!UnmountByPath("/data", false) && FindPartitionByPath("/data")) return false;
-  UnmountMainPartitions(false);
+  UnmountMainPartitions();
   if (!android::base::SetProperty("twrp.storage.ready", "1")) return false;
 
   for (TWPartition* partition : partitions_) {
@@ -2238,21 +2236,12 @@ void TWPartitionManager::MountAllStorage() const {
   }
 }
 
-void TWPartitionManager::UnmountMainPartitions(bool unmount_vendor) const {
+void TWPartitionManager::UnmountMainPartitions() const {
   // Unmounts system and data if data is not data/media
   // Also unmounts boot if boot is mountable
   LOGINFO("Unmounting main partitions...\n");
 
-  // Startup skips this: vendor HALs (keymaster/gatekeeper/thh/soter) mmap
-  // /vendor, init restarts them, and those HALs are required for decryption.
-  // Keep /vendor mounted during startup; install/repack paths still unmount
-  // it explicitly.
-  if (unmount_vendor && FindPartitionByPath("/vendor")) {
-    if (!UnmountByPath("/vendor", false)) {
-      LOGINFO("Vendor partition is busy; using lazy unmount\n");
-      UnmountByPath("/vendor", false, MNT_DETACH);
-    }
-  }
+  if (FindPartitionByPath("/vendor")) UnmountByPath("/vendor", false);
   if (FindPartitionByPath(GetAndroidRootPath())) UnmountByPath(GetAndroidRootPath(), true);
   if (FindPartitionByPath("/product")) UnmountByPath("/product", false);
   if (!datamedia) UnmountByPath("/data", true);
