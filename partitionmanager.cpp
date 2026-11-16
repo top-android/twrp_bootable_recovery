@@ -3649,8 +3649,8 @@ void TWPartitionManager::PrepareDynamicPartitionsForInstall() const {
   if (!GetSuperStatus()) return;
   // Vendor HALs mmap /vendor and init restarts them; stop them for the
   // duration of the install so the dynamic partitions can be really
-  // unmounted and dm-removed. Decryption is already done at this point and a
-  // successful install reboots the device.
+  // unmounted and dm-removed. Repeated attempts cover HAL processes that take
+  // a moment to exit and release their block-device references.
   static constexpr const char* kVendorServices[] = {
       "keymaster-4-1-beanpod",
       "keymaster_attestation-1-1",
@@ -3658,20 +3658,39 @@ void TWPartitionManager::PrepareDynamicPartitionsForInstall() const {
       "thh-2-0",
       "soter-1-0",
   };
-  for (const char* service : kVendorServices)
-    android::base::SetProperty("ctl.stop", service);
-  usleep(300 * 1000);
-
+  std::vector<TWPartition*> pending;
   for (TWPartition* partition : partitions_) {
-    if (!partition->is_super_) continue;
-    const std::string name = GetBarePartitionName(partition->GetMountPoint());
-    if (!partition->Unmount(false))
-      LOGINFO("Install: unable to unmount %s\n", partition->GetMountPoint().c_str());
-    if (DestroyLogicalPartition(name))
-      LOGINFO("Install: removed dynamic partition %s\n", name.c_str());
-    else
-      LOGERR("Install: unable to remove dynamic partition %s\n", name.c_str());
+    if (partition->is_super_) pending.push_back(partition);
   }
+  if (pending.empty()) return;
+
+  for (int attempt = 1; attempt <= 5 && !pending.empty(); ++attempt) {
+    for (const char* service : kVendorServices)
+      android::base::SetProperty("ctl.stop", service);
+    usleep(400 * 1000);
+    TWFunc::KillForUseTargetProcess("/vendor");
+    usleep(200 * 1000);
+
+    for (auto it = pending.begin(); it != pending.end();) {
+      TWPartition* partition = *it;
+      const std::string name = GetBarePartitionName(partition->GetMountPoint());
+      if (!partition->Unmount(false))
+        LOGINFO("Install: attempt %d unable to unmount %s\n", attempt,
+                partition->GetMountPoint().c_str());
+      if (DestroyLogicalPartition(name)) {
+        LOGINFO("Install: removed dynamic partition %s (attempt %d)\n", name.c_str(), attempt);
+        it = pending.erase(it);
+      } else {
+        LOGERR("Install: attempt %d unable to remove dynamic partition %s\n", attempt,
+               name.c_str());
+        ++it;
+      }
+    }
+    if (!pending.empty()) usleep(300 * 1000);
+  }
+  for (TWPartition* partition : pending)
+    LOGERR("Install: dynamic partition %s still busy after retries\n",
+           partition->GetMountPoint().c_str());
 }
 
 bool TWPartitionManager::UnmapSuperDevices() {
