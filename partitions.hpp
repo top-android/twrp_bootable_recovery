@@ -768,7 +768,7 @@ public:
   void MountAllStorage() const;
 
   // Unmounts system and data if not data/media and boot if boot is mountable
-  void UnmountMainPartitions() const;
+  void UnmountMainPartitions(bool unmount_vendor = true) const;
 
   // Repartitions the sdcard
   int PartitionSdCard() const;
@@ -943,6 +943,7 @@ public:
   static void UnlockBlockPartitions();
 
   // Unmap super devices in TWRP
+  void PrepareDynamicPartitionsForInstall() const;
   bool UnmapSuperDevices();
 
   // Check and run pending merges on data for VAB devices

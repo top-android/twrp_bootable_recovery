@@ -272,9 +272,16 @@ int TWinstall_zip(const char* path, int* wipe_cache, bool check_for_digest) {
 
 	bool _isUpdatePkg = isUpdatePkg(Zip);
 
+	if (_isUpdatePkg) {
+		// Startup keeps /vendor mounted for decryption; release all dynamic
+		// partitions before the OTA updater runs remove_all_groups.
+		PartitionManager.PrepareDynamicPartitionsForInstall();
+	}
+
 	if (unmount_system) {
 		gui2_console::info("unmount_system");
-		if(!PartitionManager.UnmountByPath(PartitionManager.GetAndroidRootPath(), true)) {
+		if (PartitionManager.IsMountedByPath(PartitionManager.GetAndroidRootPath()) &&
+		    !PartitionManager.UnmountByPath(PartitionManager.GetAndroidRootPath(), true)) {
 			gui2_console::log_error("unmount_system_err");
 			return -1;
 		}

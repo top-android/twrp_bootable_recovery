@@ -516,13 +516,15 @@ bool TWPartitionManager::SetupFstabPartitions(const bool display_error) {
     }
   }
 #ifndef USE_VENDOR_LIBS
-  if (ven && !ven->Unmount(display_error)) return false;
+  // Startup keeps /vendor mounted: keymaster/gatekeeper/thh/soter mmap it and
+  // init restarts them; decryption needs those HALs. Install and repack paths
+  // still unmount /vendor explicitly.
   if (sys && !sys->Unmount(display_error)) return false;
 #endif
 
   // Finish startup mount cleanup before starting HALs and recovering keys.
   if (!UnmountByPath("/data", false) && FindPartitionByPath("/data")) return false;
-  UnmountMainPartitions();
+  UnmountMainPartitions(false);
   if (!android::base::SetProperty("twrp.storage.ready", "1")) return false;
 
   for (TWPartition* partition : partitions_) {
@@ -2236,12 +2238,21 @@ void TWPartitionManager::MountAllStorage() const {
   }
 }
 
-void TWPartitionManager::UnmountMainPartitions() const {
+void TWPartitionManager::UnmountMainPartitions(bool unmount_vendor) const {
   // Unmounts system and data if data is not data/media
   // Also unmounts boot if boot is mountable
   LOGINFO("Unmounting main partitions...\n");
 
-  if (FindPartitionByPath("/vendor")) UnmountByPath("/vendor", false);
+  // Startup skips this: vendor HALs (keymaster/gatekeeper/thh/soter) mmap
+  // /vendor, init restarts them, and those HALs are required for decryption.
+  // Keep /vendor mounted during startup; install/repack paths still unmount
+  // it explicitly.
+  if (unmount_vendor && FindPartitionByPath("/vendor")) {
+    if (!UnmountByPath("/vendor", false)) {
+      LOGINFO("Vendor partition is busy; using lazy unmount\n");
+      UnmountByPath("/vendor", false, MNT_DETACH);
+    }
+  }
   if (FindPartitionByPath(GetAndroidRootPath())) UnmountByPath(GetAndroidRootPath(), true);
   if (FindPartitionByPath("/product")) UnmountByPath("/product", false);
   if (!datamedia) UnmountByPath("/data", true);
@@ -3632,6 +3643,35 @@ static bool DestroyIfMapped(const std::string& name) {
   // It may have disappeared between lstat() and destruction.
   if (lstat(mapper_path.c_str(), &st) != 0 && errno == ENOENT) return true;
   return false;
+}
+
+void TWPartitionManager::PrepareDynamicPartitionsForInstall() const {
+  if (!GetSuperStatus()) return;
+  // Vendor HALs mmap /vendor and init restarts them; stop them for the
+  // duration of the install so the dynamic partitions can be really
+  // unmounted and dm-removed. Decryption is already done at this point and a
+  // successful install reboots the device.
+  static constexpr const char* kVendorServices[] = {
+      "keymaster-4-1-beanpod",
+      "keymaster_attestation-1-1",
+      "gatekeeper-1-0",
+      "thh-2-0",
+      "soter-1-0",
+  };
+  for (const char* service : kVendorServices)
+    android::base::SetProperty("ctl.stop", service);
+  usleep(300 * 1000);
+
+  for (TWPartition* partition : partitions_) {
+    if (!partition->is_super_) continue;
+    const std::string name = GetBarePartitionName(partition->GetMountPoint());
+    if (!partition->Unmount(false))
+      LOGINFO("Install: unable to unmount %s\n", partition->GetMountPoint().c_str());
+    if (DestroyLogicalPartition(name))
+      LOGINFO("Install: removed dynamic partition %s\n", name.c_str());
+    else
+      LOGERR("Install: unable to remove dynamic partition %s\n", name.c_str());
+  }
 }
 
 bool TWPartitionManager::UnmapSuperDevices() {
